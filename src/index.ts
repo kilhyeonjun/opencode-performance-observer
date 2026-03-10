@@ -17,7 +17,7 @@ function getEventTime(event: Event): number {
     }
   }
   if (event.type === "message.updated") {
-    return event.properties.info.time.created ?? Date.now();
+    return event.properties.info.time?.created ?? Date.now();
   }
   return Date.now();
 }
@@ -27,7 +27,7 @@ export const PerformanceObserverPlugin: Plugin = async ({ client, directory }) =
     join(directory, ".opencode-performance-observer", "history.jsonl"),
   );
   const store = new SessionStore(history, 2000);
-  const messageRoles = new Map<string, "assistant" | "user">();
+  const assistantMessages = new Set<string>();
   const partCharLength = new Map<string, number>();
   const finalized = new Set<string>();
 
@@ -59,66 +59,67 @@ export const PerformanceObserverPlugin: Plugin = async ({ client, directory }) =
       }),
     },
 
-    async event({ event }) {
-      if (event.type === "message.updated") {
-        const info = event.properties.info;
-        if (!asAssistant(info)) return;
+    event: async ({ event }) => {
+      try {
+        if (event.type === "message.updated") {
+          const info = event.properties.info;
+          if (!asAssistant(info)) return;
 
-        messageRoles.set(info.id, "assistant");
-        store.beginTurn(info.sessionID, info.id, info.time.created);
+          assistantMessages.add(info.id);
+          store.beginTurn(info.sessionID, info.id, info.time.created);
 
-        const key = `${info.sessionID}:${info.id}`;
-        if (info.finish === "stop" && !finalized.has(key)) {
-          finalized.add(key);
-          const record = await store.finishTurn(info.sessionID, info.id, info.time.completed ?? Date.now(), {
-            output: info.tokens.output,
-            reasoning: info.tokens.reasoning,
-          });
-
-          if (record) {
-            const latency =
-              record.latencyMs !== undefined
-                ? ` latency ${record.latencyMs}ms`
-                : "";
-            await client.tui.showToast({
-              body: {
-                message: `Turn avg ${record.averageTps.toFixed(1)} TPS | ${record.totalTokens} tokens${latency}`,
-                variant: "success",
-                duration: 1200,
-              },
+          const key = `${info.sessionID}:${info.id}`;
+          if (info.finish === "stop" && !finalized.has(key)) {
+            finalized.add(key);
+            const record = await store.finishTurn(info.sessionID, info.id, info.time.completed ?? Date.now(), {
+              output: info.tokens.output,
+              reasoning: info.tokens.reasoning,
             });
+
+            if (record) {
+              const latency =
+                record.latencyMs !== undefined
+                  ? ` latency ${record.latencyMs}ms`
+                  : "";
+              await client.tui.showToast({
+                body: {
+                  message: `Turn avg ${record.averageTps.toFixed(1)} TPS | ${record.totalTokens} tokens${latency}`,
+                  variant: "success",
+                  duration: 1200,
+                },
+              }).catch(() => {});
+            }
           }
+          return;
         }
-        return;
-      }
 
-      if (event.type !== "message.part.updated") return;
-      const part = event.properties.part;
-      if (part.type !== "text" && part.type !== "reasoning") return;
-      if (messageRoles.get(part.messageID) !== "assistant") return;
+        if (event.type !== "message.part.updated") return;
+        const part = event.properties.part;
+        if (part.type !== "text" && part.type !== "reasoning") return;
 
-      const now = getEventTime(event);
-      const previousLength = partCharLength.get(part.id) ?? 0;
-      const currentLength = part.text.length;
-      const deltaText = event.properties.delta ?? part.text.slice(previousLength);
-      partCharLength.set(part.id, currentLength);
+        const now = getEventTime(event);
+        const previousLength = partCharLength.get(part.id) ?? 0;
+        const currentLength = part.text.length;
+        const deltaText = event.properties.delta ?? part.text.slice(previousLength);
+        partCharLength.set(part.id, currentLength);
 
-      const tokenDelta = estimateTokenDelta(deltaText);
-      if (tokenDelta <= 0) return;
+        const tokenDelta = estimateTokenDelta(deltaText);
+        if (tokenDelta <= 0) return;
 
-      store.recordDelta(part.sessionID, part.messageID, tokenDelta, now, part.type);
+        store.recordDelta(part.sessionID, part.messageID, tokenDelta, now, part.type);
 
-      if (store.shouldEmitToast(part.sessionID, now, 250)) {
-        await client.tui.showToast({
-          body: {
-            message: store.formatLiveLine(part.sessionID, now),
-            variant: "info",
-            duration: 500,
-          },
-        });
+        if (store.shouldEmitToast(part.sessionID, now, 250)) {
+          await client.tui.showToast({
+            body: {
+              message: store.formatLiveLine(part.sessionID, now),
+              variant: "info",
+              duration: 500,
+            },
+          }).catch(() => {});
+        }
+      } catch (_) {
+        // Prevent silent plugin death — OpenCode does not await event hooks
       }
     },
   };
 };
-
-
