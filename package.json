@@ -1,0 +1,22 @@
+{
+  "name": "opencode-performance-observer",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Personal OpenCode performance plugin scaffold",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "typescript": "^5.9.2",
+    "vitest": "^2.1.9"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.2.24",
+    "@opencode-ai/sdk": "^1.2.24"
+  }
+}
