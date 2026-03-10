@@ -22,7 +22,7 @@ function getEventTime(event: Event): number {
   return Date.now();
 }
 
-const PerformanceObserverPlugin: Plugin = async ({ client, directory }) => {
+export const PerformanceObserverPlugin: Plugin = async ({ client, directory }) => {
   const history = new JsonlHistory(
     join(directory, ".opencode-performance-observer", "history.jsonl"),
   );
@@ -121,4 +121,4 @@ const PerformanceObserverPlugin: Plugin = async ({ client, directory }) => {
   };
 };
 
-export default PerformanceObserverPlugin;
+
