@@ -82,18 +82,25 @@ export class SessionStore {
     sessionID: string,
     messageID: string,
     endedAt: number,
-    totals?: { output: number; reasoning: number },
+    meta: {
+      modelID: string;
+      providerID: string;
+      cost: number;
+      input: number;
+      output: number;
+      reasoning: number;
+      cacheRead: number;
+      cacheWrite: number;
+    },
   ): Promise<SessionHistoryRecord | undefined> {
     const session = this.sessions.get(sessionID);
     if (!session) return undefined;
     const turn = session.turns.get(messageID);
     if (!turn) return undefined;
 
-    if (totals) {
-      turn.outputTokens = totals.output;
-      turn.reasoningTokens = totals.reasoning;
-      turn.totalTokens = totals.output + totals.reasoning;
-    }
+    turn.outputTokens = meta.output;
+    turn.reasoningTokens = meta.reasoning;
+    turn.totalTokens = meta.output + meta.reasoning;
 
     const durationMs = Math.max(endedAt - turn.startedAt, 1);
     const latencyMs = turn.firstTokenAt
@@ -104,12 +111,18 @@ export class SessionStore {
     const record: SessionHistoryRecord = {
       sessionID,
       messageID,
+      modelID: meta.modelID,
+      providerID: meta.providerID,
       startedAt: turn.startedAt,
       firstTokenAt: turn.firstTokenAt,
       endedAt,
+      inputTokens: meta.input,
       outputTokens: turn.outputTokens,
       reasoningTokens: turn.reasoningTokens,
+      cacheReadTokens: meta.cacheRead,
+      cacheWriteTokens: meta.cacheWrite,
       totalTokens: turn.totalTokens,
+      cost: meta.cost,
       latencyMs,
       durationMs,
       averageTps: avg,

@@ -53,11 +53,20 @@ export const PerformanceObserverPlugin: Plugin = async ({ client }) => {
             return "No performance history yet for this session.";
           }
 
+          const totalCost = current.reduce((sum, r) => sum + (r.cost ?? 0), 0);
+          const totalIn = current.reduce((sum, r) => sum + (r.inputTokens ?? 0), 0);
+          const totalOut = current.reduce((sum, r) => sum + r.totalTokens, 0);
+
           const lines = current.map((row, index) => {
             const latency = row.latencyMs !== undefined ? `${row.latencyMs}ms` : "n/a";
-            return `${index + 1}. avgTPS=${row.averageTps.toFixed(1)} latency=${latency} tokens=${row.totalTokens} duration=${row.durationMs}ms`;
+            const cost = row.cost !== undefined ? `$${row.cost.toFixed(4)}` : "n/a";
+            const model = row.modelID ?? "unknown";
+            const cache = row.cacheReadTokens ? ` cache=${row.cacheReadTokens}` : "";
+            return `${index + 1}. [${model}] TPS=${row.averageTps.toFixed(1)} latency=${latency} in=${row.inputTokens ?? 0} out=${row.totalTokens}${cache} cost=${cost} ${row.durationMs}ms`;
           });
-          return [`Session ${context.sessionID} recent turns:`, ...lines].join("\n");
+
+          const summary = `Session total: $${totalCost.toFixed(4)} | in=${totalIn} out=${totalOut}`;
+          return [`Session ${context.sessionID} recent turns:`, ...lines, "", summary].join("\n");
         },
       }),
     },
@@ -76,8 +85,14 @@ export const PerformanceObserverPlugin: Plugin = async ({ client }) => {
           if (info.finish === "stop" && !finalized.has(key)) {
             finalized.add(key);
             const record = await store.finishTurn(info.sessionID, info.id, info.time.completed ?? Date.now(), {
+              modelID: info.modelID,
+              providerID: info.providerID,
+              cost: info.cost,
+              input: info.tokens.input,
               output: info.tokens.output,
               reasoning: info.tokens.reasoning,
+              cacheRead: info.tokens.cache.read,
+              cacheWrite: info.tokens.cache.write,
             });
 
             if (record) {
@@ -85,13 +100,24 @@ export const PerformanceObserverPlugin: Plugin = async ({ client }) => {
                 record.latencyMs !== undefined
                   ? ` | latency ${record.latencyMs}ms`
                   : "";
+              const costStr = record.cost > 0 ? ` | $${record.cost.toFixed(4)}` : "";
               await client.tui.showToast({
                 body: {
-                  message: `avg ${record.averageTps.toFixed(1)} TPS | ${record.totalTokens} tokens${latency}`,
+                  message: `avg ${record.averageTps.toFixed(1)} TPS | ${record.totalTokens} tokens${latency}${costStr}`,
                   variant: "success",
                   duration: 5000,
                 },
               }).catch(() => {});
+
+              if (record.latencyMs !== undefined && record.latencyMs > 3000) {
+                await client.tui.showToast({
+                  body: {
+                    message: `TTFT ${(record.latencyMs / 1000).toFixed(1)}s — high latency on ${record.modelID}`,
+                    variant: "warning",
+                    duration: 5000,
+                  },
+                }).catch(() => {});
+              }
             }
           }
           return;

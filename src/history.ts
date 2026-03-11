@@ -4,12 +4,18 @@ import { dirname } from "node:path";
 export type SessionHistoryRecord = {
   sessionID: string;
   messageID: string;
+  modelID: string;
+  providerID: string;
   startedAt: number;
   firstTokenAt?: number;
   endedAt: number;
+  inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
   totalTokens: number;
+  cost: number;
   latencyMs?: number;
   durationMs: number;
   averageTps: number;

@@ -11,6 +11,24 @@ afterEach(async () => {
   tempDirs.length = 0;
 });
 
+const baseRecord = {
+  sessionID: "s1",
+  messageID: "m1",
+  modelID: "claude-sonnet-4-20250514",
+  providerID: "anthropic",
+  startedAt: 1,
+  endedAt: 10,
+  inputTokens: 500,
+  outputTokens: 10,
+  reasoningTokens: 2,
+  cacheReadTokens: 100,
+  cacheWriteTokens: 50,
+  totalTokens: 12,
+  cost: 0.003,
+  durationMs: 9,
+  averageTps: 1333,
+};
+
 describe("JsonlHistory", () => {
   it("appends and reads back recent records", async () => {
     const dir = await mkdtemp(join(tmpdir(), "perf-observer-"));
@@ -19,32 +37,33 @@ describe("JsonlHistory", () => {
     const filePath = join(dir, "history.jsonl");
     const history = new JsonlHistory(filePath);
 
-    await history.append({
-      sessionID: "s1",
-      messageID: "m1",
-      startedAt: 1,
-      endedAt: 10,
-      outputTokens: 10,
-      reasoningTokens: 2,
-      totalTokens: 12,
-      durationMs: 9,
-      averageTps: 1333,
-    });
-
-    await history.append({
-      sessionID: "s1",
-      messageID: "m2",
-      startedAt: 11,
-      endedAt: 20,
-      outputTokens: 20,
-      reasoningTokens: 4,
-      totalTokens: 24,
-      durationMs: 9,
-      averageTps: 2666,
-    });
+    await history.append({ ...baseRecord, messageID: "m1" });
+    await history.append({ ...baseRecord, messageID: "m2", cost: 0.007 });
 
     const recent = await history.readRecent(1);
     expect(recent).toHaveLength(1);
     expect(recent[0].messageID).toBe("m2");
+    expect(recent[0].cost).toBe(0.007);
+    expect(recent[0].modelID).toBe("claude-sonnet-4-20250514");
+  });
+
+  it("reads back all new fields correctly", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "perf-observer-"));
+    tempDirs.push(dir);
+
+    const filePath = join(dir, "history.jsonl");
+    const history = new JsonlHistory(filePath);
+
+    await history.append(baseRecord);
+
+    const recent = await history.readRecent(5);
+    expect(recent).toHaveLength(1);
+
+    const r = recent[0];
+    expect(r.inputTokens).toBe(500);
+    expect(r.cacheReadTokens).toBe(100);
+    expect(r.cacheWriteTokens).toBe(50);
+    expect(r.providerID).toBe("anthropic");
+    expect(r.cost).toBe(0.003);
   });
 });
