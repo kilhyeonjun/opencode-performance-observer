@@ -7,6 +7,7 @@ export class ThroughputTracker {
   private readonly samples: PerfSample[] = [];
   private readonly windowMs: number;
   private readonly startedAt: number;
+  private cumulativeTokens = 0;
 
   constructor(windowMs = 2000, startedAt = Date.now()) {
     this.windowMs = windowMs;
@@ -15,6 +16,7 @@ export class ThroughputTracker {
 
   record(tokens: number, ts = Date.now()): void {
     if (tokens <= 0) return;
+    this.cumulativeTokens += tokens;
     this.samples.push({ ts, tokens });
     this.prune(ts);
   }
@@ -30,12 +32,11 @@ export class ThroughputTracker {
 
   averageTps(now = Date.now()): number {
     const elapsedMs = Math.max(now - this.startedAt, 1);
-    const total = this.samples.reduce((sum, s) => sum + s.tokens, 0);
-    return total / (elapsedMs / 1000);
+    return this.cumulativeTokens / (elapsedMs / 1000);
   }
 
   totalTokens(): number {
-    return this.samples.reduce((sum, s) => sum + s.tokens, 0);
+    return this.cumulativeTokens;
   }
 
   private prune(now: number): void {

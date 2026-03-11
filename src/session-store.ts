@@ -28,6 +28,7 @@ export class SessionStore {
 
   beginTurn(sessionID: string, messageID: string, startedAt: number): void {
     const session = this.getOrCreate(sessionID, startedAt);
+    if (session.turns.has(messageID)) return;
     session.turns.set(messageID, {
       sessionID,
       messageID,

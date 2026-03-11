@@ -25,4 +25,25 @@ describe("ThroughputTracker", () => {
 
     expect(tracker.averageTps(1000)).toBe(100);
   });
+
+  it("averageTps stays correct after prune removes old samples", () => {
+    const tracker = new ThroughputTracker(500, 0);
+    tracker.record(50, 100);
+    tracker.record(50, 200);
+
+    expect(tracker.averageTps(2000)).toBe(50);
+
+    expect(tracker.instantTps(2000)).toBe(0);
+
+    expect(tracker.totalTokens()).toBe(100);
+  });
+
+  it("totalTokens accumulates across pruned windows", () => {
+    const tracker = new ThroughputTracker(100, 0);
+    tracker.record(10, 50);
+    tracker.record(20, 150);
+    tracker.record(30, 350);
+
+    expect(tracker.totalTokens()).toBe(60);
+  });
 });

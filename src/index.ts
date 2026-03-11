@@ -1,7 +1,6 @@
 import { tool, type Plugin } from "@opencode-ai/plugin";
 import type { AssistantMessage, Event, Message } from "@opencode-ai/sdk";
 import { join } from "node:path";
-import { appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { JsonlHistory } from "./history.js";
 import { SessionStore } from "./session-store.js";
@@ -22,17 +21,6 @@ function asAssistant(message: Message): message is AssistantMessage {
   return message.role === "assistant";
 }
 
-const LOG_PATH = join(
-  process.env.TMPDIR ?? "/tmp",
-  "opencode-perf-observer-debug.log",
-);
-
-function debugLog(msg: string) {
-  try {
-    appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${msg}\n`);
-  } catch {}
-}
-
 export const PerformanceObserverPlugin: Plugin = async ({ client }) => {
   const historyDir = join(
     homedir(),
@@ -41,7 +29,6 @@ export const PerformanceObserverPlugin: Plugin = async ({ client }) => {
     "opencode",
     "opencode-performance-observer",
   );
-  debugLog(`PLUGIN_INIT historyDir=${historyDir}`);
 
   const history = new JsonlHistory(join(historyDir, "history.jsonl"));
   const store = new SessionStore(history, 2000);
@@ -82,12 +69,12 @@ export const PerformanceObserverPlugin: Plugin = async ({ client }) => {
           const { info } = (event as { type: string; properties: { info: Message } }).properties;
           if (!asAssistant(info)) return;
 
+          // Only create turn if it doesn't already exist (avoid resetting on finish=stop)
           store.beginTurn(info.sessionID, info.id, info.time.created);
 
           const key = `${info.sessionID}:${info.id}`;
           if (info.finish === "stop" && !finalized.has(key)) {
             finalized.add(key);
-            debugLog(`TURN_FINISH msg=${info.id} tokens_out=${info.tokens.output}`);
             const record = await store.finishTurn(info.sessionID, info.id, info.time.completed ?? Date.now(), {
               output: info.tokens.output,
               reasoning: info.tokens.reasoning,
@@ -96,14 +83,13 @@ export const PerformanceObserverPlugin: Plugin = async ({ client }) => {
             if (record) {
               const latency =
                 record.latencyMs !== undefined
-                  ? ` latency ${record.latencyMs}ms`
+                  ? ` | latency ${record.latencyMs}ms`
                   : "";
-              debugLog(`TOAST_SUMMARY avg=${record.averageTps.toFixed(1)} total=${record.totalTokens}`);
               await client.tui.showToast({
                 body: {
-                  message: `Turn avg ${record.averageTps.toFixed(1)} TPS | ${record.totalTokens} tokens${latency}`,
+                  message: `avg ${record.averageTps.toFixed(1)} TPS | ${record.totalTokens} tokens${latency}`,
                   variant: "success",
-                  duration: 1200,
+                  duration: 5000,
                 },
               }).catch(() => {});
             }
@@ -124,7 +110,6 @@ export const PerformanceObserverPlugin: Plugin = async ({ client }) => {
 
           if (store.shouldEmitToast(sessionID, now, 250)) {
             const line = store.formatLiveLine(sessionID, now);
-            debugLog(`TOAST_LIVE ${line}`);
             await client.tui.showToast({
               body: {
                 message: line,
@@ -135,9 +120,7 @@ export const PerformanceObserverPlugin: Plugin = async ({ client }) => {
           }
           return;
         }
-      } catch (err) {
-        debugLog(`ERROR ${err instanceof Error ? err.message : String(err)}`);
-      }
+      } catch {}
     },
   };
 };
