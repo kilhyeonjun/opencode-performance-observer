@@ -1,34 +1,50 @@
 import { tool, type Plugin } from "@opencode-ai/plugin";
 import type { AssistantMessage, Event, Message } from "@opencode-ai/sdk";
 import { join } from "node:path";
+import { appendFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { JsonlHistory } from "./history.js";
 import { SessionStore } from "./session-store.js";
 import { estimateTokenDelta } from "./token-estimator.js";
+
+interface PartDeltaEvent {
+  type: "message.part.delta";
+  properties: {
+    sessionID: string;
+    messageID: string;
+    partID: string;
+    field: string;
+    delta: string;
+  };
+}
 
 function asAssistant(message: Message): message is AssistantMessage {
   return message.role === "assistant";
 }
 
-function getEventTime(event: Event): number {
-  if (event.type === "message.part.updated") {
-    const part = event.properties.part;
-    if (part.type === "text" || part.type === "reasoning") {
-      return part.time?.start ?? Date.now();
-    }
-  }
-  if (event.type === "message.updated") {
-    return event.properties.info.time?.created ?? Date.now();
-  }
-  return Date.now();
+const LOG_PATH = join(
+  process.env.TMPDIR ?? "/tmp",
+  "opencode-perf-observer-debug.log",
+);
+
+function debugLog(msg: string) {
+  try {
+    appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${msg}\n`);
+  } catch {}
 }
 
-export const PerformanceObserverPlugin: Plugin = async ({ client, directory }) => {
-  const history = new JsonlHistory(
-    join(directory, ".opencode-performance-observer", "history.jsonl"),
+export const PerformanceObserverPlugin: Plugin = async ({ client }) => {
+  const historyDir = join(
+    homedir(),
+    ".local",
+    "share",
+    "opencode",
+    "opencode-performance-observer",
   );
+  debugLog(`PLUGIN_INIT historyDir=${historyDir}`);
+
+  const history = new JsonlHistory(join(historyDir, "history.jsonl"));
   const store = new SessionStore(history, 2000);
-  const assistantMessages = new Set<string>();
-  const partCharLength = new Map<string, number>();
   const finalized = new Set<string>();
 
   return {
@@ -61,16 +77,17 @@ export const PerformanceObserverPlugin: Plugin = async ({ client, directory }) =
 
     event: async ({ event }) => {
       try {
-        if (event.type === "message.updated") {
-          const info = event.properties.info;
+        const eventType = event.type as string;
+        if (eventType === "message.updated") {
+          const { info } = (event as { type: string; properties: { info: Message } }).properties;
           if (!asAssistant(info)) return;
 
-          assistantMessages.add(info.id);
           store.beginTurn(info.sessionID, info.id, info.time.created);
 
           const key = `${info.sessionID}:${info.id}`;
           if (info.finish === "stop" && !finalized.has(key)) {
             finalized.add(key);
+            debugLog(`TURN_FINISH msg=${info.id} tokens_out=${info.tokens.output}`);
             const record = await store.finishTurn(info.sessionID, info.id, info.time.completed ?? Date.now(), {
               output: info.tokens.output,
               reasoning: info.tokens.reasoning,
@@ -81,6 +98,7 @@ export const PerformanceObserverPlugin: Plugin = async ({ client, directory }) =
                 record.latencyMs !== undefined
                   ? ` latency ${record.latencyMs}ms`
                   : "";
+              debugLog(`TOAST_SUMMARY avg=${record.averageTps.toFixed(1)} total=${record.totalTokens}`);
               await client.tui.showToast({
                 body: {
                   message: `Turn avg ${record.averageTps.toFixed(1)} TPS | ${record.totalTokens} tokens${latency}`,
@@ -93,32 +111,32 @@ export const PerformanceObserverPlugin: Plugin = async ({ client, directory }) =
           return;
         }
 
-        if (event.type !== "message.part.updated") return;
-        const part = event.properties.part;
-        if (part.type !== "text" && part.type !== "reasoning") return;
+        if (eventType === "message.part.delta") {
+          const delta = event as unknown as PartDeltaEvent;
+          const { sessionID, messageID, partID, field, delta: text } = delta.properties;
+          if (field !== "text" && field !== "reasoning") return;
 
-        const now = getEventTime(event);
-        const previousLength = partCharLength.get(part.id) ?? 0;
-        const currentLength = part.text.length;
-        const deltaText = event.properties.delta ?? part.text.slice(previousLength);
-        partCharLength.set(part.id, currentLength);
+          const tokenDelta = estimateTokenDelta(text);
+          if (tokenDelta <= 0) return;
 
-        const tokenDelta = estimateTokenDelta(deltaText);
-        if (tokenDelta <= 0) return;
+          const now = Date.now();
+          store.recordDelta(sessionID, messageID, tokenDelta, now, field);
 
-        store.recordDelta(part.sessionID, part.messageID, tokenDelta, now, part.type);
-
-        if (store.shouldEmitToast(part.sessionID, now, 250)) {
-          await client.tui.showToast({
-            body: {
-              message: store.formatLiveLine(part.sessionID, now),
-              variant: "info",
-              duration: 500,
-            },
-          }).catch(() => {});
+          if (store.shouldEmitToast(sessionID, now, 250)) {
+            const line = store.formatLiveLine(sessionID, now);
+            debugLog(`TOAST_LIVE ${line}`);
+            await client.tui.showToast({
+              body: {
+                message: line,
+                variant: "info",
+                duration: 500,
+              },
+            }).catch(() => {});
+          }
+          return;
         }
-      } catch (_) {
-        // Prevent silent plugin death — OpenCode does not await event hooks
+      } catch (err) {
+        debugLog(`ERROR ${err instanceof Error ? err.message : String(err)}`);
       }
     },
   };
